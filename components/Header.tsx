@@ -20,9 +20,9 @@ export default function Header({ level }: HeaderProps) {
         </div>
 
         {/* Center */}
-        <h1 className="text-white font-bold text-lg tracking-widest uppercase">
-          Metanite
-        </h1>
+       <h1 className="text-white font-bold text-lg tracking-widest uppercase">
+  Meta-Leveling
+</h1>
 
         {/* Right */}
         <div className="flex items-center gap-2 bg-background border border-border rounded-full px-3 py-1">

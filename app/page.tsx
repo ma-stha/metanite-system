@@ -1,33 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/AuthContext'
 import { getUserData, createUserData, updateUserData } from '@/lib/firestore'
+import { UserData, Goal, Achievement, DailyTask } from '@/types'
 import Header from '@/components/Header'
-import QuestCard from '@/components/QuestCard'
 import XPBar from '@/components/XPBar'
+import GoalCard from '@/components/GoalCard'
 import LevelUpModal from '@/components/LevelUpModal'
-
-interface Quest {
-  id: number
-  title: string
-  xp: number
-  completed: boolean
-}
-
-const LEVEL_NAMES: Record<number, string> = {
-  1: 'Initiate',
-  2: 'Apprentice',
-  3: 'Operative',
-  4: 'Specialist',
-  5: 'Elite',
-  6: 'Veteran',
-  7: 'Expert',
-  8: 'Master',
-  9: 'Legend',
-  10: 'Transcendent',
-}
 
 function xpForNextLevel(level: number): number {
   return level * 100
@@ -41,34 +22,28 @@ function getTodayString(): string {
   return new Date().toISOString().split('T')[0]
 }
 
-function getDaysRemaining(deadline: string): number {
-  const today = new Date()
-  const end = new Date(deadline)
-  const diff = Math.ceil((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-  return diff
-}
+const GOAL_COLORS: ('purple' | 'blue' | 'green')[] = ['purple', 'blue', 'green']
+const CATEGORIES = ['Career', 'Health', 'Business', 'Education', 'Finance', 'Personal']
 
 export default function Home() {
   const { user, loading, logout } = useAuth()
   const router = useRouter()
 
-  const [xp, setXp] = useState(0)
-  const [level, setLevel] = useState(1)
-  const [streak, setStreak] = useState(0)
-  const [quests, setQuests] = useState<Quest[]>([])
-  const [lastCompletedDate, setLastCompletedDate] = useState('')
+  const [userData, setUserData] = useState<UserData | null>(null)
   const [dataLoading, setDataLoading] = useState(true)
-  const [goal, setGoal] = useState('')
-  const [deadline, setDeadline] = useState('')
   const [showLevelUp, setShowLevelUp] = useState(false)
   const [newLevel, setNewLevel] = useState(1)
+  const [showAddGoal, setShowAddGoal] = useState(false)
+  const [newGoalTitle, setNewGoalTitle] = useState('')
+  const [newGoalCategory, setNewGoalCategory] = useState('Career')
+  const [newGoalTasks, setNewGoalTasks] = useState(['', '', ''])
 
+  // --- REDIRECT IF NOT LOGGED IN ---
   useEffect(() => {
-    if (!loading && !user) {
-      router.push('/login')
-    }
+    if (!loading && !user) router.push('/login')
   }, [user, loading, router])
 
+  // --- LOAD USER DATA ---
   useEffect(() => {
     async function loadData() {
       if (!user) return
@@ -79,100 +54,213 @@ export default function Home() {
         data = await createUserData(
           user.uid,
           user.email ?? '',
-          user.displayName ?? 'Operative'
+          user.displayName ?? ''
         )
         router.push('/onboarding')
         return
       }
 
-      if (!data.onboarded) {
+      if (!data.onboarded || !data.goals) {
         router.push('/onboarding')
         return
       }
 
+      // Reset daily tasks if new day
       const today = getTodayString()
+      if (data.lastCompletedDate !== today) {
+        const resetGoals = data.goals.map(g => ({
+          ...g,
+          dailyTasks: g.dailyTasks.map(t => ({ ...t, completed: false }))
+        }))
+        data = { ...data, goals: resetGoals }
+      }
+
+      // Check streak
       const yesterday = new Date()
       yesterday.setDate(yesterday.getDate() - 1)
       const yesterdayStr = yesterday.toISOString().split('T')[0]
-
-      let currentStreak = data.streak
-      let currentQuests = data.quests
-
       if (
         data.lastCompletedDate !== today &&
         data.lastCompletedDate !== yesterdayStr
       ) {
-        currentStreak = 0
+        data = { ...data, streak: 0 }
       }
 
-      if (data.lastCompletedDate !== today) {
-        currentQuests = data.quests.map(q => ({ ...q, completed: false }))
-      }
-
-      setXp(data.xp)
-      setLevel(data.level)
-      setStreak(currentStreak)
-      setLastCompletedDate(data.lastCompletedDate)
-      setQuests(currentQuests)
-      setGoal(data.goal ?? '')
-      setDeadline(data.deadline ?? '')
+      setUserData(data)
       setDataLoading(false)
     }
 
     loadData()
   }, [user, router])
 
-  async function completeQuest(id: number) {
-    if (!user) return
-    const quest = quests.find(q => q.id === id)
-    if (!quest || quest.completed) return
-
-    const updatedQuests = quests.map(q =>
-      q.id === id ? { ...q, completed: true } : q
-    )
-    setQuests(updatedQuests)
-
-    const newXPRaw = xp + quest.xp
-    const needed = xpForNextLevel(level)
-    let newXP = newXPRaw
-    let newLevel = level
+  // --- PROCESS XP + LEVEL UP ---
+  function processXP(current: UserData, amount: number): UserData {
+    const newXPRaw = current.globalXP + amount
+    const needed = xpForNextLevel(current.globalLevel)
 
     if (newXPRaw >= needed) {
-      newLevel = level + 1
-      newXP = newXPRaw - needed
-      setLevel(newLevel)
-      setNewLevel(newLevel)
+      const newLvl = current.globalLevel + 1
+      setNewLevel(newLvl)
       setShowLevelUp(true)
+      return { ...current, globalXP: newXPRaw - needed, globalLevel: newLvl }
     }
-    setXp(newXP)
+    return { ...current, globalXP: newXPRaw }
+  }
 
-    const allDone = updatedQuests.every(q => q.completed)
-    let newStreak = streak
-    let newLastDate = lastCompletedDate
+  // --- COMPLETE TASK ---
+  async function handleCompleteTask(goalId: string, taskId: string) {
+    if (!userData || !user) return
+
+    const goal = userData.goals.find(g => g.id === goalId)
+    const task = goal?.dailyTasks.find(t => t.id === taskId)
+    if (!task || task.completed) return
+
+    let updated = { ...userData }
+
+    // Mark task complete
+    updated.goals = updated.goals.map(g =>
+      g.id === goalId
+        ? {
+            ...g,
+            dailyTasks: g.dailyTasks.map(t =>
+              t.id === taskId ? { ...t, completed: true } : t
+            )
+          }
+        : g
+    )
+
+    // Add XP
+    updated = processXP(updated, task.xp)
+
+    // Check streak — all tasks in ALL goals done?
     const today = getTodayString()
-
-    if (allDone && lastCompletedDate !== today) {
-      newStreak = streak + 1
-      newLastDate = today
-      setStreak(newStreak)
-      setLastCompletedDate(today)
+    const allDone = updated.goals.every(g =>
+      g.dailyTasks.every(t => t.completed)
+    )
+    if (allDone && updated.lastCompletedDate !== today) {
+      updated.streak = (userData.streak ?? 0) + 1
+      updated.lastCompletedDate = today
     }
 
+    setUserData(updated)
     await updateUserData(user.uid, {
-      xp: newXP,
-      level: newLevel,
-      streak: newStreak,
-      lastCompletedDate: newLastDate,
-      quests: updatedQuests,
+      globalXP: updated.globalXP,
+      globalLevel: updated.globalLevel,
+      goals: updated.goals,
+      streak: updated.streak,
+      lastCompletedDate: updated.lastCompletedDate,
     })
   }
 
-  const needed = xpForNextLevel(level)
-  const xpPercent = Math.round((xp / needed) * 100)
-  const completedCount = quests.filter(q => q.completed).length
-  const daysLeft = deadline ? getDaysRemaining(deadline) : null
+  // --- ADD ACHIEVEMENT ---
+  async function handleAddAchievement(
+    goalId: string,
+    title: string,
+    xp: number,
+    deadline?: string
+  ) {
+    if (!userData || !user) return
 
-  if (loading || dataLoading) {
+    const newAchievement: Achievement = {
+      id: `ach-${Date.now()}`,
+      title,
+      xp,
+      unlocked: false,
+      ...(deadline ? { deadline } : {}),
+    }
+
+    const updated = {
+      ...userData,
+      goals: userData.goals.map(g =>
+        g.id === goalId
+          ? { ...g, achievements: [...g.achievements, newAchievement] }
+          : g
+      )
+    }
+
+    setUserData(updated)
+    await updateUserData(user.uid, { goals: updated.goals })
+  }
+
+  // --- UNLOCK ACHIEVEMENT ---
+  async function handleUnlockAchievement(goalId: string, achievementId: string) {
+    if (!userData || !user) return
+
+    const goal = userData.goals.find(g => g.id === goalId)
+    const achievement = goal?.achievements.find(a => a.id === achievementId)
+    if (!achievement || achievement.unlocked) return
+
+    let updated = { ...userData }
+
+    // Unlock achievement + check if goal complete
+    updated.goals = updated.goals.map(g =>
+      g.id === goalId
+        ? {
+            ...g,
+            achievements: g.achievements.map(a =>
+              a.id === achievementId
+                ? { ...a, unlocked: true, unlockedAt: new Date().toISOString() }
+                : a
+            ),
+            completed: g.achievements.every(a =>
+              a.id === achievementId ? true : a.unlocked
+            )
+          }
+        : g
+    )
+
+    // Big XP bonus
+    updated = processXP(updated, achievement.xp)
+
+    setUserData(updated)
+    await updateUserData(user.uid, {
+      globalXP: updated.globalXP,
+      globalLevel: updated.globalLevel,
+      goals: updated.goals,
+    })
+  }
+
+  // --- ADD NEW GOAL ---
+  async function handleAddGoal() {
+    if (!userData || !user) return
+    if (!newGoalTitle.trim() || newGoalTasks.some(t => !t.trim())) return
+    if ((userData.goals ?? []).length >= 3) return
+
+    const dailyTasks: DailyTask[] = newGoalTasks.map((t, i) => ({
+      id: `task-${Date.now()}-${i}`,
+      title: t.trim(),
+      xp: i === 0 ? 40 : 30,
+      completed: false,
+    }))
+
+    const newGoal: Goal = {
+      id: `goal-${Date.now()}`,
+      title: newGoalTitle.trim(),
+      category: newGoalCategory,
+      color: GOAL_COLORS[(userData.goals ?? []).length],
+      dailyTasks,
+      achievements: [],
+      completed: false,
+      createdAt: new Date().toISOString(),
+    }
+
+    const updated = {
+      ...userData,
+      goals: [...(userData.goals ?? []), newGoal]
+    }
+
+    setUserData(updated)
+    await updateUserData(user.uid, { goals: updated.goals })
+
+    // Reset form
+    setNewGoalTitle('')
+    setNewGoalCategory('Career')
+    setNewGoalTasks(['', '', ''])
+    setShowAddGoal(false)
+  }
+
+  // --- LOADING STATE ---
+  if (loading || dataLoading || !userData) {
     return (
       <main className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
@@ -185,6 +273,10 @@ export default function Home() {
     )
   }
 
+  const needed = xpForNextLevel(userData.globalLevel)
+  const xpPercent = Math.round((userData.globalXP / needed) * 100)
+  const canAddGoal = (userData.goals ?? []).length < 3
+
   return (
     <main className="min-h-screen bg-background">
 
@@ -196,16 +288,16 @@ export default function Home() {
         />
       )}
 
-      <Header level={level} />
+      <Header level={userData.globalLevel} />
 
-      <div className="max-w-4xl mx-auto px-6 py-16 animate-fade-in">
+      <div className="max-w-6xl mx-auto px-6 py-12 animate-fade-in">
 
         {/* Top Row */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
             <span className="text-xs font-mono text-muted uppercase tracking-widest">
-              Welcome back, {user?.displayName?.split(' ')[0] ?? 'Operative'}
+              Welcome back, {user?.displayName?.split(' ')[0]}
             </span>
           </div>
           <button
@@ -217,47 +309,21 @@ export default function Home() {
         </div>
 
         {/* Title */}
-        <h2 className="text-5xl font-bold text-white mb-4 leading-tight">
+        <h2 className="text-4xl font-bold text-white mb-8">
           Welcome,{' '}
           <span className="text-primary-light">
-            {user?.displayName?.split(' ')[0] ?? 'Operative'}.
+            {user?.displayName?.split(' ')[0]}.
           </span>
         </h2>
 
-        {/* Goal Banner */}
-        {goal && (
-          <div className="flex items-center justify-between bg-surface border border-border rounded-2xl px-5 py-4 mb-8">
-            <div>
-              <p className="text-xs font-mono text-muted uppercase tracking-widest mb-1">
-                Active Mission
-              </p>
-              <p className="text-white font-medium">{goal}</p>
-            </div>
-            {daysLeft !== null && (
-              <div className="text-right flex-shrink-0 ml-4">
-                <p className="text-xs font-mono text-muted uppercase tracking-widest mb-1">
-                  Deadline
-                </p>
-                <p className={`font-bold text-sm font-mono ${
-                  daysLeft < 7 ? 'text-red-400' :
-                  daysLeft < 30 ? 'text-yellow-400' :
-                  'text-success'
-                }`}>
-                  {daysLeft > 0 ? `${daysLeft}d remaining` : 'Deadline passed'}
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Stats Row */}
-        <div className="grid grid-cols-3 gap-4 mb-8">
+        {/* Global Stats */}
+        <div className="grid grid-cols-3 gap-4 mb-6">
 
           <div className="bg-surface border border-border rounded-2xl p-5">
             <p className="text-xs font-mono text-muted uppercase tracking-widest mb-2">
-              Total XP
+              Global XP
             </p>
-            <p className="text-3xl font-bold text-white">{xp}</p>
+            <p className="text-3xl font-bold text-white">{userData.globalXP}</p>
             <p className="text-xs text-muted mt-1">/ {needed} to level up</p>
           </div>
 
@@ -265,8 +331,10 @@ export default function Home() {
             <p className="text-xs font-mono text-muted uppercase tracking-widest mb-2">
               Level
             </p>
-            <p className="text-3xl font-bold text-primary-light">{padLevel(level)}</p>
-            <p className="text-xs text-muted mt-1">{LEVEL_NAMES[level] ?? 'Ascended'}</p>
+            <p className="text-3xl font-bold text-primary-light">
+              {padLevel(userData.globalLevel)}
+            </p>
+            <p className="text-xs text-muted mt-1">Global Rank</p>
           </div>
 
           <div className="bg-surface border border-border rounded-2xl p-5">
@@ -274,13 +342,13 @@ export default function Home() {
               Streak
             </p>
             <div className="flex items-baseline gap-1">
-              <p className="text-3xl font-bold text-white">{streak}</p>
-              {streak >= 3 && <span className="text-lg">🔥</span>}
+              <p className="text-3xl font-bold text-white">{userData.streak}</p>
+              {userData.streak >= 3 && <span>🔥</span>}
             </div>
             <p className="text-xs text-muted mt-1">
-              {streak === 0
-                ? 'Start your streak!'
-                : streak === 1
+              {userData.streak === 0
+                ? 'Start today!'
+                : userData.streak === 1
                 ? 'day active'
                 : 'days active'}
             </p>
@@ -288,43 +356,124 @@ export default function Home() {
 
         </div>
 
-        {/* XP Bar */}
-        <XPBar xp={xp} level={level} xpPercent={xpPercent} needed={needed} />
+        {/* Global XP Bar */}
+        <XPBar
+          xp={userData.globalXP}
+          level={userData.globalLevel}
+          xpPercent={xpPercent}
+          needed={needed}
+        />
 
-        {/* Daily Missions */}
-        <div className="bg-surface border border-border rounded-2xl p-6">
-
-          <div className="flex items-center justify-between mb-6">
-            <p className="text-xs font-mono text-muted uppercase tracking-widest">
-              Daily Missions
-            </p>
-            <span className="text-xs font-mono text-muted">
-              {completedCount}/{quests.length} complete
-            </span>
-          </div>
-
-          <div className="flex flex-col gap-3">
-            {quests.map(quest => (
-              <QuestCard
-                key={quest.id}
-                quest={quest}
-                onComplete={completeQuest}
-              />
-            ))}
-          </div>
-
-          {completedCount === quests.length && quests.length > 0 && (
-            <div className="mt-6 p-4 bg-background border border-success rounded-xl text-center">
-              <p className="text-success font-bold font-mono tracking-widest text-sm">
-                ✓ ALL MISSIONS COMPLETE — STREAK: {streak} DAY{streak !== 1 ? 'S' : ''}
-              </p>
-              <p className="text-muted text-xs mt-1">
-                Come back tomorrow to keep your streak alive 🔥
-              </p>
-            </div>
-          )}
-
+        {/* Goals Grid — adapts 1, 2, or 3 columns */}
+        <div className={`grid gap-4 mb-6 ${
+          (userData.goals ?? []).length === 1
+            ? 'grid-cols-1 max-w-2xl'
+            : (userData.goals ?? []).length === 2
+            ? 'grid-cols-2'
+            : 'grid-cols-3'
+        }`}>
+          {(userData.goals ?? []).map(goal => (
+            <GoalCard
+              key={goal.id}
+              goal={goal}
+              onCompleteTask={handleCompleteTask}
+              onAddAchievement={handleAddAchievement}
+              onUnlockAchievement={handleUnlockAchievement}
+              onUpdateTasks={() => {}}
+              isOnly={(userData.goals ?? []).length === 1}
+            />
+          ))}
         </div>
+
+        {/* Add Goal Button */}
+        {canAddGoal && !showAddGoal && (
+          <button
+            onClick={() => setShowAddGoal(true)}
+            className="w-full border border-dashed border-border hover:border-primary text-muted hover:text-white text-sm font-mono py-4 rounded-2xl transition-all duration-200"
+          >
+            + Add Another Goal ({(userData.goals ?? []).length}/3)
+          </button>
+        )}
+
+        {/* Add Goal Form */}
+        {showAddGoal && (
+          <div className="bg-surface border border-border rounded-2xl p-6 animate-fade-in">
+
+            <p className="text-xs font-mono text-muted uppercase tracking-widest mb-5">
+              New Goal
+            </p>
+
+            <div className="flex flex-col gap-4">
+
+              {/* Title */}
+              <input
+                type="text"
+                value={newGoalTitle}
+                onChange={e => setNewGoalTitle(e.target.value)}
+                placeholder="Goal title..."
+                className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white placeholder-muted focus:outline-none focus:border-primary"
+              />
+
+              {/* Category */}
+              <div className="flex flex-wrap gap-2">
+                {CATEGORIES.map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setNewGoalCategory(cat)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      newGoalCategory === cat
+                        ? 'bg-primary text-white'
+                        : 'bg-background border border-border text-muted hover:border-primary hover:text-white'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              {/* Daily Tasks */}
+              {newGoalTasks.map((task, i) => (
+                <input
+                  key={i}
+                  type="text"
+                  value={task}
+                  onChange={e => {
+                    const updated = [...newGoalTasks]
+                    updated[i] = e.target.value
+                    setNewGoalTasks(updated)
+                  }}
+                  placeholder={
+                    i === 0
+                      ? 'Primary daily task (+40 XP)...'
+                      : `Daily task ${i + 1} (+30 XP)...`
+                  }
+                  className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white placeholder-muted focus:outline-none focus:border-primary text-sm"
+                />
+              ))}
+
+              {/* Buttons */}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleAddGoal}
+                  className="flex-1 bg-primary hover:bg-primary-light text-white font-bold py-3 rounded-xl transition-all text-sm uppercase tracking-widest"
+                >
+                  Add Goal →
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddGoal(false)
+                    setNewGoalTitle('')
+                    setNewGoalTasks(['', '', ''])
+                  }}
+                  className="flex-1 bg-background border border-border text-muted hover:text-white font-bold py-3 rounded-xl transition-all text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
 
       </div>
     </main>

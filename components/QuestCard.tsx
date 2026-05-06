@@ -1,11 +1,11 @@
 interface QuestCardProps {
   quest: {
-    id: number
+    id: string | number
     title: string
     xp: number
     completed: boolean
   }
-  onComplete: (id: number) => void
+  onComplete: (id: string | number) => void
 }
 
 export default function QuestCard({ quest, onComplete }: QuestCardProps) {
