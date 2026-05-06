@@ -290,8 +290,7 @@ export default function Home() {
 
       <Header level={userData.globalLevel} />
 
-      <div className="max-w-6xl mx-auto px-6 py-12 animate-fade-in">
-
+<div className="max-w-6xl mx-auto px-4 md:px-6 py-8 md:py-12 animate-fade-in">
         {/* Top Row */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
@@ -309,21 +308,20 @@ export default function Home() {
         </div>
 
         {/* Title */}
-        <h2 className="text-4xl font-bold text-white mb-8">
-          Welcome,{' '}
+<h2 className="text-2xl md:text-4xl font-bold text-white mb-6 md:mb-8">          Welcome,{' '}
           <span className="text-primary-light">
             {user?.displayName?.split(' ')[0]}.
           </span>
         </h2>
 
         {/* Global Stats */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-3 gap-2 md:gap-4 mb-6">
 
           <div className="bg-surface border border-border rounded-2xl p-5">
             <p className="text-xs font-mono text-muted uppercase tracking-widest mb-2">
               Global XP
             </p>
-            <p className="text-3xl font-bold text-white">{userData.globalXP}</p>
+            <p className="text-2xl md:text-3xl font-bold text-white">{userData.globalXP}</p>
             <p className="text-xs text-muted mt-1">/ {needed} to level up</p>
           </div>
 
@@ -342,7 +340,7 @@ export default function Home() {
               Streak
             </p>
             <div className="flex items-baseline gap-1">
-              <p className="text-3xl font-bold text-white">{userData.streak}</p>
+              <p className="text-2xl md:text-3xl font-bold text-white">{userData.streak}</p>
               {userData.streak >= 3 && <span>🔥</span>}
             </div>
             <p className="text-xs text-muted mt-1">
@@ -366,12 +364,12 @@ export default function Home() {
 
         {/* Goals Grid — adapts 1, 2, or 3 columns */}
         <div className={`grid gap-4 mb-6 ${
-          (userData.goals ?? []).length === 1
-            ? 'grid-cols-1 max-w-2xl'
-            : (userData.goals ?? []).length === 2
-            ? 'grid-cols-2'
-            : 'grid-cols-3'
-        }`}>
+  (userData.goals ?? []).length === 1
+    ? 'grid-cols-1 max-w-2xl'
+    : (userData.goals ?? []).length === 2
+    ? 'grid-cols-1 md:grid-cols-2'
+    : 'grid-cols-1 md:grid-cols-3'
+}`}>
           {(userData.goals ?? []).map(goal => (
             <GoalCard
               key={goal.id}

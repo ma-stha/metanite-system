@@ -35,9 +35,9 @@ export default function LoginPage() {
               System Online
             </span>
           </div>
-          <h1 className="text-5xl font-bold text-white tracking-widest uppercase mb-3">
-            Metanite
-          </h1>
+          <h1 className="text-3xl md:text-5xl font-bold text-white tracking-widest uppercase mb-3">
+  Meta-Leveling
+</h1>
           <p className="text-muted text-sm">
             Your real-life leveling system. Sign in to begin.
           </p>
@@ -73,9 +73,9 @@ export default function LoginPage() {
         </div>
 
         {/* Bottom tag */}
-        <p className="text-center text-xs text-muted font-mono mt-8 uppercase tracking-widest">
-          Metanite System v1.0
-        </p>
+       <p className="text-center text-xs text-muted font-mono mt-8 uppercase tracking-widest">
+  Meta-Leveling v2.0
+</p>
 
       </div>
     </main>

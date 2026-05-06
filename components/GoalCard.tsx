@@ -65,7 +65,7 @@ export default function GoalCard({
   const colors = colorMap[goal.color]
 
   return (
-    <div className={`bg-surface border ${colors.border} rounded-2xl p-5 flex flex-col gap-4 ${colors.glow}`}>
+    <div className={`bg-surface border ${colors.border} rounded-2xl p-4 md:p-5 flex flex-col gap-4 ${colors.glow}`}>
 
       {/* Goal Header */}
       <div>
