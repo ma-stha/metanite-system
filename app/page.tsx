@@ -1,479 +1,166 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { useAuth } from '@/lib/AuthContext'
-import { getUserData, createUserData, updateUserData } from '@/lib/firestore'
-import { UserData, Goal, Achievement, DailyTask } from '@/types'
-import Header from '@/components/Header'
-import XPBar from '@/components/XPBar'
-import GoalCard from '@/components/GoalCard'
-import LevelUpModal from '@/components/LevelUpModal'
+import Link from "next/link";
+import { useAuth } from "@/lib/AuthContext";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
-function xpForNextLevel(level: number): number {
-  return level * 100
-}
+const features = [
+  { tag: "GOALS", title: "Set Up To 3 Active Goals", description: "Focus is the mechanic. You can only run 3 goals at once — so you pick what actually matters. Each goal gets its own daily tasks, XP track, and color.", icon: "🎯" },
+  { tag: "XP SYSTEM", title: "Earn XP, Level Up", description: "Complete daily tasks and achievements to earn XP. Every level requires more than the last. Watch your global level climb as you put in real work.", icon: "⚡" },
+  { tag: "STREAKS", title: "Streak Tracking", description: "Show up every day. Your streak counter records consecutive days of completing tasks. Miss a day and it resets — brutal, but honest.", icon: "🔥" },
+  { tag: "ACHIEVEMENTS", title: "Mini Achievements", description: "Each goal has milestone achievements with deadlines and XP rewards. Unlock them by doing the work — not by tapping a button.", icon: "🏆" },
+  { tag: "DAILY RESET", title: "Tasks Reset Every Day", description: "Daily tasks auto-reset at midnight. Every day is a fresh chance to earn XP and extend your streak. No backlog, no excuses.", icon: "🔄" },
+  { tag: "FREE", title: "No Cost. No Ads.", description: "Meta-Leveling is free to use. Sign in with Google, your progress syncs to the cloud. That's it.", icon: "✨" },
+];
 
-function padLevel(level: number): string {
-  return level.toString().padStart(2, '0')
-}
+const steps = [
+  { number: "01", title: "Sign In With Google", description: "One click. No password. Your data syncs instantly." },
+  { number: "02", title: "Create Your Goals", description: "Pick up to 3 goals. Name them, choose a category, add 3 daily tasks each." },
+  { number: "03", title: "Complete Tasks Daily", description: "Check off your tasks each day. Earn XP, grow your streak, unlock achievements." },
+  { number: "04", title: "Level Up", description: "Watch your real-life character level climb as you put in consistent work." },
+];
 
-function getTodayString(): string {
-  return new Date().toISOString().split('T')[0]
-}
+export default function LandingPage() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
 
-const GOAL_COLORS: ('purple' | 'blue' | 'green')[] = ['purple', 'blue', 'green']
-const CATEGORIES = ['Career', 'Health', 'Business', 'Education', 'Finance', 'Personal']
-
-export default function Home() {
-  const { user, loading, logout } = useAuth()
-  const router = useRouter()
-
-  const [userData, setUserData] = useState<UserData | null>(null)
-  const [dataLoading, setDataLoading] = useState(true)
-  const [showLevelUp, setShowLevelUp] = useState(false)
-  const [newLevel, setNewLevel] = useState(1)
-  const [showAddGoal, setShowAddGoal] = useState(false)
-  const [newGoalTitle, setNewGoalTitle] = useState('')
-  const [newGoalCategory, setNewGoalCategory] = useState('Career')
-  const [newGoalTasks, setNewGoalTasks] = useState(['', '', ''])
-
-  // --- REDIRECT IF NOT LOGGED IN ---
+  // If already logged in, skip landing page and go straight to dashboard
   useEffect(() => {
-    if (!loading && !user) router.push('/login')
-  }, [user, loading, router])
-
-  // --- LOAD USER DATA ---
-  useEffect(() => {
-    async function loadData() {
-      if (!user) return
-
-      let data = await getUserData(user.uid)
-
-      if (!data) {
-        data = await createUserData(
-          user.uid,
-          user.email ?? '',
-          user.displayName ?? ''
-        )
-        router.push('/onboarding')
-        return
-      }
-
-      if (!data.onboarded || !data.goals) {
-        router.push('/onboarding')
-        return
-      }
-
-      // Reset daily tasks if new day
-      const today = getTodayString()
-      if (data.lastCompletedDate !== today) {
-        const resetGoals = data.goals.map(g => ({
-          ...g,
-          dailyTasks: g.dailyTasks.map(t => ({ ...t, completed: false }))
-        }))
-        data = { ...data, goals: resetGoals }
-      }
-
-      // Check streak
-      const yesterday = new Date()
-      yesterday.setDate(yesterday.getDate() - 1)
-      const yesterdayStr = yesterday.toISOString().split('T')[0]
-      if (
-        data.lastCompletedDate !== today &&
-        data.lastCompletedDate !== yesterdayStr
-      ) {
-        data = { ...data, streak: 0 }
-      }
-
-      setUserData(data)
-      setDataLoading(false)
+    if (!loading && user) {
+      router.push('/dashboard');
     }
+  }, [user, loading, router]);
 
-    loadData()
-  }, [user, router])
-
-  // --- PROCESS XP + LEVEL UP ---
-  function processXP(current: UserData, amount: number): UserData {
-    const newXPRaw = current.globalXP + amount
-    const needed = xpForNextLevel(current.globalLevel)
-
-    if (newXPRaw >= needed) {
-      const newLvl = current.globalLevel + 1
-      setNewLevel(newLvl)
-      setShowLevelUp(true)
-      return { ...current, globalXP: newXPRaw - needed, globalLevel: newLvl }
-    }
-    return { ...current, globalXP: newXPRaw }
-  }
-
-  // --- COMPLETE TASK ---
-  async function handleCompleteTask(goalId: string, taskId: string) {
-    if (!userData || !user) return
-
-    const goal = userData.goals.find(g => g.id === goalId)
-    const task = goal?.dailyTasks.find(t => t.id === taskId)
-    if (!task || task.completed) return
-
-    let updated = { ...userData }
-
-    // Mark task complete
-    updated.goals = updated.goals.map(g =>
-      g.id === goalId
-        ? {
-            ...g,
-            dailyTasks: g.dailyTasks.map(t =>
-              t.id === taskId ? { ...t, completed: true } : t
-            )
-          }
-        : g
-    )
-
-    // Add XP
-    updated = processXP(updated, task.xp)
-
-    // Check streak — all tasks in ALL goals done?
-    const today = getTodayString()
-    const allDone = updated.goals.every(g =>
-      g.dailyTasks.every(t => t.completed)
-    )
-    if (allDone && updated.lastCompletedDate !== today) {
-      updated.streak = (userData.streak ?? 0) + 1
-      updated.lastCompletedDate = today
-    }
-
-    setUserData(updated)
-    await updateUserData(user.uid, {
-      globalXP: updated.globalXP,
-      globalLevel: updated.globalLevel,
-      goals: updated.goals,
-      streak: updated.streak,
-      lastCompletedDate: updated.lastCompletedDate,
-    })
-  }
-
-  // --- ADD ACHIEVEMENT ---
-  async function handleAddAchievement(
-    goalId: string,
-    title: string,
-    xp: number,
-    deadline?: string
-  ) {
-    if (!userData || !user) return
-
-    const newAchievement: Achievement = {
-      id: `ach-${Date.now()}`,
-      title,
-      xp,
-      unlocked: false,
-      ...(deadline ? { deadline } : {}),
-    }
-
-    const updated = {
-      ...userData,
-      goals: userData.goals.map(g =>
-        g.id === goalId
-          ? { ...g, achievements: [...g.achievements, newAchievement] }
-          : g
-      )
-    }
-
-    setUserData(updated)
-    await updateUserData(user.uid, { goals: updated.goals })
-  }
-
-  // --- UNLOCK ACHIEVEMENT ---
-  async function handleUnlockAchievement(goalId: string, achievementId: string) {
-    if (!userData || !user) return
-
-    const goal = userData.goals.find(g => g.id === goalId)
-    const achievement = goal?.achievements.find(a => a.id === achievementId)
-    if (!achievement || achievement.unlocked) return
-
-    let updated = { ...userData }
-
-    // Unlock achievement + check if goal complete
-    updated.goals = updated.goals.map(g =>
-      g.id === goalId
-        ? {
-            ...g,
-            achievements: g.achievements.map(a =>
-              a.id === achievementId
-                ? { ...a, unlocked: true, unlockedAt: new Date().toISOString() }
-                : a
-            ),
-            completed: g.achievements.every(a =>
-              a.id === achievementId ? true : a.unlocked
-            )
-          }
-        : g
-    )
-
-    // Big XP bonus
-    updated = processXP(updated, achievement.xp)
-
-    setUserData(updated)
-    await updateUserData(user.uid, {
-      globalXP: updated.globalXP,
-      globalLevel: updated.globalLevel,
-      goals: updated.goals,
-    })
-  }
-
-  // --- ADD NEW GOAL ---
-  async function handleAddGoal() {
-    if (!userData || !user) return
-    if (!newGoalTitle.trim() || newGoalTasks.some(t => !t.trim())) return
-    if ((userData.goals ?? []).length >= 3) return
-
-    const dailyTasks: DailyTask[] = newGoalTasks.map((t, i) => ({
-      id: `task-${Date.now()}-${i}`,
-      title: t.trim(),
-      xp: i === 0 ? 40 : 30,
-      completed: false,
-    }))
-
-    const newGoal: Goal = {
-      id: `goal-${Date.now()}`,
-      title: newGoalTitle.trim(),
-      category: newGoalCategory,
-      color: GOAL_COLORS[(userData.goals ?? []).length],
-      dailyTasks,
-      achievements: [],
-      completed: false,
-      createdAt: new Date().toISOString(),
-    }
-
-    const updated = {
-      ...userData,
-      goals: [...(userData.goals ?? []), newGoal]
-    }
-
-    setUserData(updated)
-    await updateUserData(user.uid, { goals: updated.goals })
-
-    // Reset form
-    setNewGoalTitle('')
-    setNewGoalCategory('Career')
-    setNewGoalTasks(['', '', ''])
-    setShowAddGoal(false)
-  }
-
-  // --- LOADING STATE ---
-  if (loading || dataLoading || !userData) {
-    return (
-      <main className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-2 h-2 rounded-full bg-primary animate-pulse mx-auto mb-4" />
-          <p className="text-muted text-xs font-mono uppercase tracking-widest">
-            Loading System...
-          </p>
-        </div>
-      </main>
-    )
-  }
-
-  const needed = xpForNextLevel(userData.globalLevel)
-  const xpPercent = Math.round((userData.globalXP / needed) * 100)
-  const canAddGoal = (userData.goals ?? []).length < 3
+  // Don't render landing page while checking auth state
+  if (loading) return null;
 
   return (
-    <main className="min-h-screen bg-background">
+    <main className="min-h-screen bg-[#0a0a0a] text-white font-mono overflow-x-hidden">
+      <style>{`
+        .glow-btn:hover { box-shadow: 0 0 24px rgba(139,92,246,0.45); }
+        .glow-btn-lg:hover { box-shadow: 0 0 32px rgba(139,92,246,0.5); }
+        .card:hover { background: rgba(109,40,217,0.08); }
+        .tag-badge { color: rgba(167,139,250,0.5); border-color: rgba(139,92,246,0.2); }
+        .card:hover .tag-badge { color: rgba(196,181,253,0.8); border-color: rgba(139,92,246,0.5); }
+        .step-num { color: rgba(139,92,246,0.12); }
+        .card:hover .step-num { color: rgba(139,92,246,0.3); }
+      `}</style>
 
-      {/* Level Up Modal */}
-      {showLevelUp && (
-        <LevelUpModal
-          level={newLevel}
-          onClose={() => setShowLevelUp(false)}
-        />
-      )}
+      {/* Grid background */}
+      <div className="fixed inset-0 pointer-events-none" style={{ backgroundImage: `linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)`, backgroundSize: "60px 60px" }} />
 
-      <Header level={userData.globalLevel} />
-
-<div className="max-w-6xl mx-auto px-4 md:px-6 py-8 md:py-12 animate-fade-in">
-        {/* Top Row */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-            <span className="text-xs font-mono text-muted uppercase tracking-widest">
-              Welcome back, {user?.displayName?.split(' ')[0]}
-            </span>
-          </div>
-          <button
-            onClick={logout}
-            className="text-xs font-mono text-muted hover:text-white transition-colors uppercase tracking-widest"
-          >
-            Logout →
-          </button>
+      {/* Nav */}
+      <nav className="relative z-10 flex items-center justify-between px-6 py-5 md:px-12 border-b border-white/[0.06]">
+        <div className="flex items-center gap-3">
+          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+          <span className="text-xs tracking-[0.2em] text-white/40 uppercase">System Online</span>
         </div>
+        <span className="text-xs tracking-[0.15em] text-white/30 uppercase">Meta-Leveling V2.0</span>
+        <Link href="/login" className="text-xs tracking-[0.15em] uppercase border px-4 py-2 transition-all duration-200 text-white/60 border-white/10 hover:text-violet-300 hover:border-violet-500/60">
+          Sign In →
+        </Link>
+      </nav>
 
-        {/* Title */}
-<h2 className="text-2xl md:text-4xl font-bold text-white mb-6 md:mb-8">          Welcome,{' '}
-          <span className="text-primary-light">
-            {user?.displayName?.split(' ')[0]}.
-          </span>
-        </h2>
-
-        {/* Global Stats */}
-        <div className="grid grid-cols-3 gap-2 md:gap-4 mb-6">
-
-          <div className="bg-surface border border-border rounded-2xl p-5">
-            <p className="text-xs font-mono text-muted uppercase tracking-widest mb-2">
-              Global XP
-            </p>
-            <p className="text-2xl md:text-3xl font-bold text-white">{userData.globalXP}</p>
-            <p className="text-xs text-muted mt-1">/ {needed} to level up</p>
-          </div>
-
-          <div className="bg-surface border border-primary rounded-2xl p-5 shadow-glow-sm">
-            <p className="text-xs font-mono text-muted uppercase tracking-widest mb-2">
-              Level
-            </p>
-            <p className="text-3xl font-bold text-primary-light">
-              {padLevel(userData.globalLevel)}
-            </p>
-            <p className="text-xs text-muted mt-1">Global Rank</p>
-          </div>
-
-          <div className="bg-surface border border-border rounded-2xl p-5">
-            <p className="text-xs font-mono text-muted uppercase tracking-widest mb-2">
-              Streak
-            </p>
-            <div className="flex items-baseline gap-1">
-              <p className="text-2xl md:text-3xl font-bold text-white">{userData.streak}</p>
-              {userData.streak >= 3 && <span>🔥</span>}
-            </div>
-            <p className="text-xs text-muted mt-1">
-              {userData.streak === 0
-                ? 'Start today!'
-                : userData.streak === 1
-                ? 'day active'
-                : 'days active'}
-            </p>
-          </div>
-
+      {/* Hero */}
+      <section className="relative z-10 flex flex-col items-center text-center px-6 pt-24 pb-28 md:pt-36 md:pb-40">
+        <span className="text-xs tracking-[0.3em] uppercase text-violet-400/60 border border-violet-500/20 px-4 py-2 mb-6">
+          Real Life · RPG Mechanics
+        </span>
+        <h1 className="text-[clamp(3.5rem,10vw,8rem)] font-black leading-none tracking-tight uppercase" style={{ fontFamily: "'Arial Black', Arial, sans-serif" }}>
+          META-<br />LEVELING
+        </h1>
+        <p className="mt-8 text-sm text-white/40 tracking-widest uppercase max-w-md leading-loose">
+          Your real life is the game.<br />Your goals are the quests.<br />You are the character.
+        </p>
+        <div className="mt-12 flex flex-col sm:flex-row gap-4 items-center">
+          <Link href="/login" className="glow-btn bg-violet-600 hover:bg-violet-500 text-white text-xs tracking-[0.2em] uppercase font-bold px-8 py-4 transition-all duration-200 hover:scale-[1.02]">
+            Start Your Journey →
+          </Link>
+          <a href="#how-it-works" className="text-xs tracking-[0.2em] uppercase text-white/40 hover:text-violet-300 transition-all duration-200 border border-white/10 hover:border-violet-500/40 px-8 py-4">
+            How It Works
+          </a>
         </div>
+      </section>
 
-        {/* Global XP Bar */}
-        <XPBar
-          xp={userData.globalXP}
-          level={userData.globalLevel}
-          xpPercent={xpPercent}
-          needed={needed}
-        />
-
-        {/* Goals Grid — adapts 1, 2, or 3 columns */}
-        <div className={`grid gap-4 mb-6 ${
-  (userData.goals ?? []).length === 1
-    ? 'grid-cols-1 max-w-2xl'
-    : (userData.goals ?? []).length === 2
-    ? 'grid-cols-1 md:grid-cols-2'
-    : 'grid-cols-1 md:grid-cols-3'
-}`}>
-          {(userData.goals ?? []).map(goal => (
-            <GoalCard
-              key={goal.id}
-              goal={goal}
-              onCompleteTask={handleCompleteTask}
-              onAddAchievement={handleAddAchievement}
-              onUnlockAchievement={handleUnlockAchievement}
-              onUpdateTasks={() => {}}
-              isOnly={(userData.goals ?? []).length === 1}
-            />
-          ))}
-        </div>
-
-        {/* Add Goal Button */}
-        {canAddGoal && !showAddGoal && (
-          <button
-            onClick={() => setShowAddGoal(true)}
-            className="w-full border border-dashed border-border hover:border-primary text-muted hover:text-white text-sm font-mono py-4 rounded-2xl transition-all duration-200"
-          >
-            + Add Another Goal ({(userData.goals ?? []).length}/3)
-          </button>
-        )}
-
-        {/* Add Goal Form */}
-        {showAddGoal && (
-          <div className="bg-surface border border-border rounded-2xl p-6 animate-fade-in">
-
-            <p className="text-xs font-mono text-muted uppercase tracking-widest mb-5">
-              New Goal
-            </p>
-
-            <div className="flex flex-col gap-4">
-
-              {/* Title */}
-              <input
-                type="text"
-                value={newGoalTitle}
-                onChange={e => setNewGoalTitle(e.target.value)}
-                placeholder="Goal title..."
-                className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white placeholder-muted focus:outline-none focus:border-primary"
-              />
-
-              {/* Category */}
-              <div className="flex flex-wrap gap-2">
-                {CATEGORIES.map(cat => (
-                  <button
-                    key={cat}
-                    onClick={() => setNewGoalCategory(cat)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                      newGoalCategory === cat
-                        ? 'bg-primary text-white'
-                        : 'bg-background border border-border text-muted hover:border-primary hover:text-white'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
+      {/* How it works */}
+      <section id="how-it-works" className="relative z-10 px-6 md:px-12 py-24 border-t border-white/[0.06]">
+        <div className="max-w-5xl mx-auto">
+          <div className="mb-16 flex items-center gap-4">
+            <span className="text-[10px] tracking-[0.3em] text-violet-400/50 uppercase">— How It Works</span>
+            <div className="flex-1 h-[1px] bg-white/[0.06]" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-px bg-white/[0.06]">
+            {steps.map((step) => (
+              <div key={step.number} className="card bg-[#0a0a0a] p-8 transition-colors duration-300">
+                <div className="step-num text-5xl font-black mb-6 leading-none transition-colors duration-300">{step.number}</div>
+                <h3 className="text-sm font-bold tracking-widest uppercase text-white mb-3">{step.title}</h3>
+                <p className="text-xs text-white/35 leading-loose">{step.description}</p>
               </div>
-
-              {/* Daily Tasks */}
-              {newGoalTasks.map((task, i) => (
-                <input
-                  key={i}
-                  type="text"
-                  value={task}
-                  onChange={e => {
-                    const updated = [...newGoalTasks]
-                    updated[i] = e.target.value
-                    setNewGoalTasks(updated)
-                  }}
-                  placeholder={
-                    i === 0
-                      ? 'Primary daily task (+40 XP)...'
-                      : `Daily task ${i + 1} (+30 XP)...`
-                  }
-                  className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white placeholder-muted focus:outline-none focus:border-primary text-sm"
-                />
-              ))}
-
-              {/* Buttons */}
-              <div className="flex gap-3">
-                <button
-                  onClick={handleAddGoal}
-                  className="flex-1 bg-primary hover:bg-primary-light text-white font-bold py-3 rounded-xl transition-all text-sm uppercase tracking-widest"
-                >
-                  Add Goal →
-                </button>
-                <button
-                  onClick={() => {
-                    setShowAddGoal(false)
-                    setNewGoalTitle('')
-                    setNewGoalTasks(['', '', ''])
-                  }}
-                  className="flex-1 bg-background border border-border text-muted hover:text-white font-bold py-3 rounded-xl transition-all text-sm"
-                >
-                  Cancel
-                </button>
-              </div>
-
-            </div>
+            ))}
           </div>
-        )}
+        </div>
+      </section>
 
-      </div>
+      {/* Features */}
+      <section className="relative z-10 px-6 md:px-12 py-24 border-t border-white/[0.06]">
+        <div className="max-w-5xl mx-auto">
+          <div className="mb-16 flex items-center gap-4">
+            <span className="text-[10px] tracking-[0.3em] text-violet-400/50 uppercase">— System Features</span>
+            <div className="flex-1 h-[1px] bg-white/[0.06]" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-white/[0.06]">
+            {features.map((feature) => (
+              <div key={feature.tag} className="card bg-[#0a0a0a] p-8 transition-colors duration-300 group">
+                <div className="flex items-center justify-between mb-6">
+                  <span className="tag-badge text-[9px] tracking-[0.3em] uppercase border px-2 py-1 transition-all duration-300">{feature.tag}</span>
+                  <span className="text-xl opacity-30 group-hover:opacity-60 transition-opacity">{feature.icon}</span>
+                </div>
+                <h3 className="text-sm font-bold tracking-wide uppercase text-white mb-3">{feature.title}</h3>
+                <p className="text-xs text-white/35 leading-loose">{feature.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* About */}
+      <section className="relative z-10 px-6 md:px-12 py-24 border-t border-white/[0.06]">
+        <div className="max-w-3xl mx-auto">
+          <div className="mb-16 flex items-center gap-4">
+            <span className="text-[10px] tracking-[0.3em] text-violet-400/50 uppercase">— About</span>
+            <div className="flex-1 h-[1px] bg-white/[0.06]" />
+          </div>
+          <div className="space-y-6 text-sm text-white/40 leading-loose">
+            <p>Meta-Leveling started as a simple question: what if your daily habits worked like an RPG? Most productivity apps are just lists. They don't give you a reason to come back tomorrow.</p>
+            <p>Every task you complete earns XP. Every day you show up extends your streak. Every goal you finish is an achievement you can look back on. The mechanics are real — not cosmetic.</p>
+            <p>It's free. It's synced to your Google account. Designed to make consistent effort feel as satisfying as it actually is.</p>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="relative z-10 px-6 md:px-12 py-32 border-t border-white/[0.06]">
+        <div className="max-w-3xl mx-auto text-center">
+          <p className="text-[10px] tracking-[0.3em] uppercase text-violet-400/40 mb-8">Ready to start?</p>
+          <h2 className="text-5xl md:text-7xl font-black uppercase leading-none tracking-tight mb-12" style={{ fontFamily: "'Arial Black', Arial, sans-serif" }}>
+            Begin Your<br />Journey
+          </h2>
+          <Link href="/login" className="glow-btn-lg inline-block bg-violet-600 hover:bg-violet-500 text-white text-xs tracking-[0.2em] uppercase font-bold px-12 py-5 transition-all duration-200 hover:scale-[1.02]">
+            Sign In With Google →
+          </Link>
+          <p className="mt-6 text-[10px] tracking-widest text-white/20 uppercase">No password needed · Free forever · Progress saved automatically</p>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="relative z-10 px-6 md:px-12 py-8 border-t border-white/[0.06] flex items-center justify-between">
+        <span className="text-[10px] tracking-[0.2em] uppercase text-white/20">Meta-Leveling V2.0</span>
+        <div className="flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-green-400/60" />
+          <span className="text-[10px] tracking-[0.2em] uppercase text-white/20">All Systems Operational</span>
+        </div>
+      </footer>
     </main>
-  )
+  );
 }
